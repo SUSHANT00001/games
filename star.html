@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catch the Falling Stars</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            color: white;
+        }
+        
+        .game-container {
+            text-align: center;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+        
+        #gameCanvas {
+            border: 2px solid #fff;
+            border-radius: 8px;
+            background: linear-gradient(180deg, #000428, #004e92);
+        }
+        
+        .game-info {
+            margin-top: 15px;
+            font-size: 16px;
+        }
+        
+        .controls {
+            margin-top: 10px;
+            font-size: 14px;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="game-info">
+            <div class="controls">Use ← → arrow keys to move the basket</div>
+        </div>
+    </div>
+
+    <script>
+        // Game canvas and context setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Game state variables
+        let gameRunning = false;
+        let score = 0;
+        let highScore = parseInt(localStorage.getItem('starCatcherHighScore')) || 0;
+        let timeLeft = 60;
+        let lastTime = 0;
+        let starSpawnTimer = 0;
+        let difficultyTimer = 0;
+        
+        // Game objects
+        const basket = {
+            x: canvas.width / 2 - 40,
+            y: canvas.height - 60,
+            width: 80,
+            height: 40,
+            speed: 8
+        };
+        
+        const stars = [];
+        const keys = {};
+        
+        // Game settings
+        let starFallSpeed = 2;
+        const starSpawnRate = 800; // milliseconds
+        const difficultyIncreaseRate = 15000; // 15 seconds
+        
+        // Event listeners for keyboard input
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+            if (e.key === ' ' && !gameRunning) {
+                startGame();
+            }
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+        
+        // Star creation function
+        function createStar() {
+            const star = {
+                x: Math.random() * (canvas.width - 30),
+                y: -30,
+                size: 15,
+                speed: starFallSpeed + Math.random() * 2,
+                rotation: 0,
+                rotationSpeed: (Math.random() - 0.5) * 0.2
+            };
+            stars.push(star);
+        }
+        
+        // Draw a five-point star polygon
+        function drawStar(x, y, size, rotation = 0) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rotation);
+            ctx.beginPath();
+            
+            const spikes = 5;
+            const outerRadius = size;
+            const innerRadius = size * 0.4;
+            
+            for (let i = 0; i < spikes * 2; i++) {
+                const angle = (i * Math.PI) / spikes;
+                const radius = i % 2 === 0 ? outerRadius : innerRadius;
+                const pointX = Math.cos(angle) * radius;
+                const pointY = Math.sin(angle) * radius;
+                
+                if (i === 0) {
+                    ctx.moveTo(pointX, pointY);
+                } else {
+                    ctx.lineTo(pointX, pointY);
+                }
+            }
+            
+            ctx.closePath();
+            ctx.fillStyle = '#FFD700';
+            ctx.fill();
+            ctx.strokeStyle = '#FFA500';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.restore();
+        }
+        
+        // Draw the basket
+        function drawBasket() {
+            // Basket body (brown rectangle)
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(basket.x, basket.y, basket.width, basket.height);
+            
+            // Basket rim (darker brown)
+            ctx.fillStyle = '#654321';
+            ctx.fillRect(basket.x, basket.y, basket.width, 8);
+            
+            // Basket handles
+            ctx.strokeStyle = '#654321';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(basket.x - 5, basket.y + 15, 8, 0, Math.PI);
+            ctx.arc(basket.x + basket.width + 5, basket.y + 15, 8, 0, Math.PI);
+            ctx.stroke();
+        }
+        
+        // Update basket position based on keyboard input
+        function updateBasket(deltaTime) {
+            if (keys['ArrowLeft'] && basket.x > 0) {
+                basket.x -= basket.speed;
+            }
+            if (keys['ArrowRight'] && basket.x < canvas.width - basket.width) {
+                basket.x += basket.speed;
+            }
+        }
+        
+        // Update all stars positions and handle collisions
+        function updateStars(deltaTime) {
+            for (let i = stars.length - 1; i >= 0; i--) {
+                const star = stars[i];
+                star.y += star.speed;
+                star.rotation += star.rotationSpeed;
+                
+                // Check collision with basket
+                if (star.x + star.size > basket.x && 
+                    star.x - star.size < basket.x + basket.width &&
+                    star.y + star.size > basket.y && 
+                    star.y - star.size < basket.y + basket.height) {
+                    score++;
+                    stars.splice(i, 1);
+                    continue;
+                }
+                
+                // Remove stars that have fallen off screen
+                if (star.y > canvas.height + 30) {
+                    stars.splice(i, 1);
+                }
+            }
+        }
+        
+        // Render game UI (score, time, high score)
+        function drawUI() {
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 24px Arial';
+            
+            // Score (top-left)
+            ctx.textAlign = 'left';
+            ctx.fillText(`Score: ${score}`, 20, 40);
+            
+            // High Score (top-right)
+            ctx.textAlign = 'right';
+            ctx.fillText(`High Score: ${highScore}`, canvas.width - 20, 40);
+            
+            // Time remaining (top-center)
+            ctx.textAlign = 'center';
+            ctx.fillText(`Time: ${timeLeft}s`, canvas.width / 2, 40);
+            
+            // Game over or start message
+            if (!gameRunning) {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 48px Arial';
+                ctx.textAlign = 'center';
+                
+                if (timeLeft <= 0) {
+                    ctx.fillText('Game Over!', canvas.width / 2, canvas.height / 2 - 40);
+                    ctx.font = 'bold 32px Arial';
+                    ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 20);
+                } else {
+                    ctx.fillText('Catch the Falling Stars!', canvas.width / 2, canvas.height / 2 - 40);
+                }
+                
+                ctx.font = '24px Arial';
+                ctx.fillText('Press SPACE to start', canvas.width / 2, canvas.height / 2 + 80);
+            }
+        }
+        
+        // Main game loop
+        function gameLoop(currentTime) {
+            const deltaTime = currentTime - lastTime;
+            lastTime = currentTime;
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (gameRunning) {
+                // Update timers
+                starSpawnTimer += deltaTime;
+                difficultyTimer += deltaTime;
+                
+                // Spawn new stars
+                if (starSpawnTimer >= starSpawnRate) {
+                    createStar();
+                    starSpawnTimer = 0;
+                }
+                
+                // Increase difficulty every 15 seconds
+                if (difficultyTimer >= difficultyIncreaseRate) {
+                    starFallSpeed += 0.5;
+                    difficultyTimer = 0;
+                }
+                
+                // Update game countdown (every second)
+                if (Math.floor(currentTime / 1000) !== Math.floor((currentTime - deltaTime) / 1000)) {
+                    timeLeft--;
+                    if (timeLeft <= 0) {
+                        endGame();
+                    }
+                }
+                
+                // Update game objects
+                updateBasket(deltaTime);
+                updateStars(deltaTime);
+                
+                // Draw game objects
+                drawBasket();
+                stars.forEach(star => {
+                    drawStar(star.x, star.y, star.size, star.rotation);
+                });
+            }
+            
+            // Draw UI
+            drawUI();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // Start new game
+        function startGame() {
+            gameRunning = true;
+            score = 0;
+            timeLeft = 60;
+            starFallSpeed = 2;
+            stars.length = 0;
+            starSpawnTimer = 0;
+            difficultyTimer = 0;
+            basket.x = canvas.width / 2 - 40;
+        }
+        
+        // End game and save high score
+        function endGame() {
+            gameRunning = false;
+            if (score > highScore) {
+                highScore = score;
+                localStorage.setItem('starCatcherHighScore', highScore.toString());
+            }
+        }
+        
+        // Initialize and start the game loop
+        requestAnimationFrame(gameLoop);
+    </script>
+</body>
+</html>
